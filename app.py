@@ -289,40 +289,58 @@ def render_citations(hits: Sequence[SearchHit]) -> None:
 def render_chat(store: VectorStore, subject: str | None, sources: list[str]) -> None:
     history = st.session_state.setdefault("messages", [])
 
-    for message in history:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-            if message["role"] == "assistant":
-                render_citations(message.get("hits", []))
-
+    # Reserve the conversation area *before* declaring the input, then write
+    # every message into it. st.chat_input only pins itself to the bottom of
+    # the viewport when it sits in the main page body; nested in a tab it
+    # renders inline, so without this the newest answer appears below the box
+    # the student is about to type in again.
+    conversation = st.container()
     question = st.chat_input("Ask a question about your materials...")
-    if not question:
-        return
 
-    history.append({"role": "user", "content": question})
-    with st.chat_message("user"):
-        st.markdown(question)
+    with conversation:
+        for message in history:
+            with st.chat_message(message["role"]):
+                if message["content"]:
+                    st.markdown(message["content"])
+                else:
+                    st.caption("_Interrupted - ask again to get an answer._")
+                if message["role"] == "assistant":
+                    render_citations(message.get("hits", []))
 
-    with st.chat_message("assistant"):
-        try:
-            with st.spinner("Searching your materials..."):
-                hits, stream = rag.ask_stream(
-                    question, store=store, subject=subject, sources=sources or None
-                )
-            answer = st.write_stream(stream)
-        except rag.LLMError as exc:
-            answer, hits = f"⚠️ {exc}", []
-            st.error(str(exc), icon="🚨")
-        except VectorStoreError as exc:
-            answer, hits = f"⚠️ {exc}", []
-            st.error(str(exc), icon="🚨")
-        except Exception as exc:
-            answer, hits = f"⚠️ Unexpected error: {exc}", []
-            st.error(f"Unexpected error: {exc}", icon="🚨")
-        else:
-            render_citations(hits)
+        if not question:
+            return
 
-    history.append({"role": "assistant", "content": answer, "hits": list(hits)})
+        history.append({"role": "user", "content": question})
+        with st.chat_message("user"):
+            st.markdown(question)
+
+        # Reserve the answer slot before streaming. Submitting another question
+        # mid-stream cancels this script run, and without the placeholder the
+        # question would be stranded in the history with nothing beneath it.
+        pending = {"role": "assistant", "content": "", "hits": []}
+        history.append(pending)
+
+        with st.chat_message("assistant"):
+            try:
+                with st.spinner("Searching your materials..."):
+                    hits, stream = rag.ask_stream(
+                        question, store=store, subject=subject, sources=sources or None
+                    )
+                answer = st.write_stream(stream)
+            except rag.LLMError as exc:
+                answer, hits = f"⚠️ {exc}", []
+                st.error(str(exc), icon="🚨")
+            except VectorStoreError as exc:
+                answer, hits = f"⚠️ {exc}", []
+                st.error(str(exc), icon="🚨")
+            except Exception as exc:
+                answer, hits = f"⚠️ Unexpected error: {exc}", []
+                st.error(f"Unexpected error: {exc}", icon="🚨")
+            else:
+                render_citations(hits)
+
+        pending["content"] = answer
+        pending["hits"] = list(hits)
 
 
 # --- Study tools tab (Phase 5) ----------------------------------------------
