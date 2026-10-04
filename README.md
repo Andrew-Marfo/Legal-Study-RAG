@@ -5,10 +5,13 @@ colorFrom: indigo
 colorTo: blue
 sdk: streamlit
 sdk_version: 1.65.0
+python_version: "3.11"
 app_file: app.py
 pinned: false
 license: mit
 short_description: RAG study assistant over your own law course materials
+preload_from_hub:
+  - BAAI/bge-base-en-v1.5
 ---
 
 # ⚖️ Legal Study Assistant
@@ -148,19 +151,45 @@ USE_LOCAL_STORE=true GROQ_API_KEY=... streamlit run app.py
 ## Deploying to Hugging Face Spaces
 
 1. **New Space** → SDK **Streamlit** → hardware **CPU Basic (free)**.
-   Use the native Streamlit SDK, not Docker — Docker Spaces no longer get free
-   hosting for new accounts.
-2. **Settings → Repository secrets**: add `GROQ_API_KEY`, `QDRANT_URL`,
-   `QDRANT_API_KEY`. Never commit these.
-3. Push:
+   Use the native Streamlit SDK, **not Docker**: since mid-2026 Hugging Face
+   requires a PRO subscription to host new Gradio or Docker Spaces on free
+   CPU. If free CPU is not offered for Streamlit either, see *Fallback hosts*
+   below rather than paying for PRO.
+
+2. **Set the Space to Private.** This is not optional for this app. A public
+   Space exposes the uploaded course materials to anyone with the URL, and
+   lets any visitor spend the owner's Groq quota. The knowledge base is
+   personal study material, so the Space should be too.
+
+3. **Settings → Repository secrets**: add `GROQ_API_KEY`, `QDRANT_URL`,
+   `QDRANT_API_KEY` and `LLM_MODEL`. Never commit these. Repository
+   *secrets*, not *variables* — variables are visible to anyone who can see
+   the Space.
+
+4. Push:
    ```bash
    git remote add space https://huggingface.co/spaces/<user>/<space>
    git push space main
    ```
-4. Watch the build log. **First boot is slow** — the Space downloads the
-   embedding model (~440 MB). Later cold starts take 30–90 s.
-5. Verify persistence: index a document, let the Space sleep, wake it, and
-   confirm the document is still listed and queryable.
+
+5. Watch the build log. The embedding model is fetched at **build** time via
+   `preload_from_hub`, so the first request does not pay for the ~440 MB
+   download; the build itself takes correspondingly longer.
+
+6. Verify persistence: index a document, let the Space sleep, wake it, and
+   confirm the document is still listed and queryable. This is what proves
+   the knowledge base lives in Qdrant rather than on the Space's disk.
+
+### Fallback hosts
+
+If free CPU is unavailable for Streamlit Spaces, in preference order:
+
+- **Streamlit Community Cloud** — free, but roughly 1 GB RAM. bge-base will
+  not fit comfortably: set `EMBED_MODEL=sentence-transformers/all-MiniLM-L6-v2`
+  **and recreate the Qdrant collection**, because the vector size changes from
+  768 to 384. Every document must then be re-indexed. Retrieval quality drops.
+- **Render** free web service — more RAM than Community Cloud, but the
+  instance sleeps aggressively and cold starts are slow.
 
 ---
 
