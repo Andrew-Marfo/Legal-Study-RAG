@@ -214,3 +214,57 @@ def test_missing_api_key_is_reported_not_crashed(monkeypatch: pytest.MonkeyPatch
     with pytest.raises(rag.LLMError, match="GROQ_API_KEY is not set"):
         rag._groq_client()
     rag._groq_client.cache_clear()
+
+
+# --- Citation marker normalisation ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("per the rule \u30101\u3011.", "per the rule [1]."),
+        ("see \u30141\u3015 and \uff3b2\uff3d", "see [1] and [2]"),
+        ("already ascii [1]", "already ascii [1]"),
+        ("", ""),
+        ("no markers at all", "no markers at all"),
+    ],
+)
+def test_non_ascii_citation_brackets_are_normalised(raw: str, expected: str):
+    assert prompts.normalise_citation_markers(raw) == expected
+
+
+def test_normalisation_is_applied_to_completed_answers(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        rag,
+        "_groq_client",
+        lambda: _FakeGroq("An offer binds on acceptance \u30101\u3011."),
+    )
+    result = rag.ask("q", store=FakeStore([_hit("a", "contracts.pdf - p. 1")]))
+    assert result.answer == "An offer binds on acceptance [1]."
+
+
+def test_normalisation_survives_a_bracket_split_across_stream_chunks():
+    """Each mapped character is one code point, so chunking cannot split one."""
+    chunks = ["An offer binds \u3010", "1", "\u3011 on acceptance."]
+    joined = "".join(prompts.normalise_citation_markers(c) for c in chunks)
+    assert joined == "An offer binds [1] on acceptance."
+
+
+class _FakeGroq:
+    """Minimal stand-in for the Groq client's completion surface."""
+
+    def __init__(self, content: str) -> None:
+        self._content = content
+
+    @property
+    def chat(self):
+        return self
+
+    @property
+    def completions(self):
+        return self
+
+    def create(self, **kwargs):
+        message = type("M", (), {"content": self._content})()
+        choice = type("C", (), {"message": message})()
+        return type("R", (), {"choices": [choice]})()

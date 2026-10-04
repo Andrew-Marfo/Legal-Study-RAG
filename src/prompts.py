@@ -50,7 +50,13 @@ for instead. Do not pad the answer with general legal knowledge.
 
 4. Cite every substantive claim with the bracketed number of the excerpt it \
 came from, like [1] or [2][3]. Place the marker at the end of the sentence it \
-supports. Every factual sentence needs one.
+supports. Every factual sentence needs one, including sentences that restate, \
+compare or draw a conclusion from earlier cited sentences - a concluding \
+sentence is still a claim about the materials and still needs its marker.
+
+4a. Use plain ASCII square brackets: [1]. Never use full-width or CJK \
+brackets such as the ones in "【1】", and never use parentheses or \
+superscripts for citations.
 
 5. Partial answers are expected and fine. Answer the part the excerpts cover, \
 then state plainly which part they do not.
@@ -70,6 +76,30 @@ STYLE:
 - Do not open with pleasantries or restate the question.
 - Do not append your own disclaimer; the interface already shows one.
 """
+
+
+# Some models (notably the gpt-oss family) emit full-width or CJK brackets for
+# citation markers no matter what the prompt says. Normalising them keeps the
+# rendered answer consistent and the markers matchable against the source list.
+_CITATION_BRACKETS = {
+    "【": "[",  # LEFT BLACK LENTICULAR BRACKET
+    "】": "]",  # RIGHT BLACK LENTICULAR BRACKET
+    "〔": "[",  # LEFT TORTOISE SHELL BRACKET
+    "〕": "]",  # RIGHT TORTOISE SHELL BRACKET
+    "［": "[",  # FULLWIDTH LEFT SQUARE BRACKET
+    "］": "]",  # FULLWIDTH RIGHT SQUARE BRACKET
+}
+
+_CITATION_TRANSLATION = str.maketrans(_CITATION_BRACKETS)
+
+
+def normalise_citation_markers(text: str) -> str:
+    """Rewrite non-ASCII citation brackets as plain [n].
+
+    Safe to apply to a streaming fragment: every mapped character is a single
+    code point, so a chunk boundary cannot split one.
+    """
+    return text.translate(_CITATION_TRANSLATION) if text else text
 
 
 def format_context(hits: Sequence[SearchHit]) -> str:

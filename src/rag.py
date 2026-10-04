@@ -109,7 +109,8 @@ def _complete(messages: Sequence[dict[str, str]]) -> str:
         raise
     except Exception as exc:
         raise LLMError(_friendly_llm_error(exc)) from exc
-    return (response.choices[0].message.content or "").strip()
+    content = (response.choices[0].message.content or "").strip()
+    return prompts.normalise_citation_markers(content)
 
 
 def _complete_stream(messages: Sequence[dict[str, str]]) -> Iterator[str]:
@@ -125,7 +126,7 @@ def _complete_stream(messages: Sequence[dict[str, str]]) -> Iterator[str]:
         for event in stream:
             piece = event.choices[0].delta.content
             if piece:
-                yield piece
+                yield prompts.normalise_citation_markers(piece)
     except LLMError:
         raise
     except Exception as exc:
@@ -143,10 +144,14 @@ def _friendly_llm_error(exc: Exception) -> str:
         )
     if "authentication" in lowered or "api key" in lowered or "401" in lowered:
         return "Groq rejected the API key. Check GROQ_API_KEY is correct and active."
-    if "model" in lowered and ("not found" in lowered or "decommission" in lowered):
+    if "model" in lowered and any(
+        marker in lowered
+        for marker in ("not found", "not_found", "does not exist", "decommission")
+    ):
         return (
-            f"Groq does not recognise the model {config.LLM_MODEL!r}. "
-            "Set LLM_MODEL to a currently available model."
+            f"Groq does not recognise the model {config.LLM_MODEL!r} - it has "
+            "probably been retired. Set LLM_MODEL in .env to a current model "
+            "(for example openai/gpt-oss-120b)."
         )
     return f"The language model call failed: {text}"
 
