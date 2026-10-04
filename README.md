@@ -59,7 +59,7 @@ UPLOAD   file → parse (PyMuPDF / python-pptx) → chunk with metadata
                 → embed (bge-base, local CPU) → upsert to Qdrant
 
 QUERY    question → embed → Qdrant search (top-k, subject/source filter)
-                 → grounded prompt → Groq llama-3.3-70b → answer + citations
+                 → grounded prompt → Groq gpt-oss-120b → answer + citations
 ```
 
 Raw uploads are transient. **The vector store is the source of truth**, and it
@@ -74,7 +74,7 @@ survive a Space sleeping or rebuilding.
 | Chunking | `langchain-text-splitters` (`RecursiveCharacterTextSplitter`) |
 | Embeddings | `sentence-transformers`, `BAAI/bge-base-en-v1.5` (local, CPU, 768-dim) |
 | Vector store | Qdrant Cloud (free 1 GB) · embedded local mode for offline dev |
-| LLM | Groq `llama-3.3-70b-versatile` (free tier) |
+| LLM | Groq `openai/gpt-oss-120b` (free tier) |
 
 ---
 
@@ -121,7 +121,7 @@ Copy `.env.example` to `.env` (git-ignored) and fill in:
 | `QDRANT_URL` | yes¹ | Qdrant Cloud endpoint: [cloud.qdrant.io](https://cloud.qdrant.io) |
 | `QDRANT_API_KEY` | yes¹ | Qdrant Cloud auth |
 | `QDRANT_COLLECTION` | no | Collection name. Default `legal_study_rag` |
-| `LLM_MODEL` | no | Default `llama-3.3-70b-versatile` |
+| `LLM_MODEL` | no | Default `openai/gpt-oss-120b` |
 | `EMBED_MODEL` | no | Default `BAAI/bge-base-en-v1.5` |
 | `USE_LOCAL_STORE` | no | `true` for an embedded on-disk store (offline dev) |
 | `LOCAL_STORE_PATH` | no | Where that store lives. Default `.local_store` |

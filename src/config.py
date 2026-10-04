@@ -47,7 +47,12 @@ DISCLAIMER = (
 # --- LLM (generation) -------------------------------------------------------
 
 GROQ_API_KEY = _env("GROQ_API_KEY")
-LLM_MODEL = _env("LLM_MODEL", "llama-3.3-70b-versatile")
+
+# Groq retires models regularly - llama-3.3-70b-versatile was decommissioned
+# and now 404s. Check `client.models.list()` if generation starts failing with
+# model_not_found, and set LLM_MODEL to a current one without touching code.
+# Known good alternatives: openai/gpt-oss-20b, qwen/qwen3.8-27b.
+LLM_MODEL = _env("LLM_MODEL", "openai/gpt-oss-120b")
 LLM_TEMPERATURE = 0.1
 LLM_MAX_TOKENS = 1536
 
