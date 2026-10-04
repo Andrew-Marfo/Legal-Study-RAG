@@ -108,3 +108,79 @@ def empty_pdf(tmp_path_factory: pytest.TempPathFactory) -> Path:
     doc.save(str(path))
     doc.close()
     return path
+
+
+DOCX_SECTIONS: list[dict[str, object]] = [
+    {
+        "heading": "Formation of Contract",
+        "paragraphs": [
+            "A contract requires offer, acceptance, consideration and an "
+            "intention to create legal relations.",
+            "Each element must be present; the absence of any one is fatal to "
+            "the formation of a binding agreement.",
+        ],
+    },
+    {
+        "heading": "Promissory Estoppel",
+        "paragraphs": [
+            "Where one party makes a clear promise intended to be relied upon, "
+            "and the other party relies on it to their detriment, the promisor "
+            "may be estopped from resiling from that promise.",
+        ],
+    },
+]
+
+
+@pytest.fixture(scope="session")
+def sample_docx(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A Word document with a title, two headed sections and a table."""
+    from docx import Document as WordDocument
+
+    path = tmp_path_factory.mktemp("docs") / "contract-notes.docx"
+    document = WordDocument()
+    document.add_heading("Contract Law Revision Notes", level=0)  # Title style
+    document.add_paragraph(
+        "These notes summarise the core doctrines covered in the first term."
+    )
+
+    for section in DOCX_SECTIONS:
+        document.add_heading(str(section["heading"]), level=1)
+        for paragraph in section["paragraphs"]:  # type: ignore[union-attr]
+            document.add_paragraph(paragraph)
+
+    # A table under the final heading, to prove tables stay with their section.
+    document.add_heading("Key Authorities", level=1)
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Case"
+    table.cell(0, 1).text = "Principle"
+    table.cell(1, 0).text = "Central London Property v High Trees House"
+    table.cell(1, 1).text = "Promissory estoppel in English law"
+
+    document.save(str(path))
+    return path
+
+
+@pytest.fixture(scope="session")
+def headingless_docx(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A Word document with no headings at all - the fallback path."""
+    from docx import Document as WordDocument
+
+    path = tmp_path_factory.mktemp("docs") / "plain-notes.docx"
+    document = WordDocument()
+    for i in range(6):
+        document.add_paragraph(
+            f"Paragraph {i + 1}: consideration must be sufficient but need not "
+            "be adequate, and the courts will not weigh the bargain."
+        )
+    document.save(str(path))
+    return path
+
+
+@pytest.fixture(scope="session")
+def empty_docx(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A Word document containing no text."""
+    from docx import Document as WordDocument
+
+    path = tmp_path_factory.mktemp("docs") / "blank.docx"
+    WordDocument().save(str(path))
+    return path

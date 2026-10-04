@@ -20,12 +20,26 @@ from pathlib import Path
 from typing import Any, Iterable, Literal
 
 import pymupdf
+from docx import Document as WordDocument
+from docx.oxml.ns import qn
+from docx.table import Table as WordTable
+from docx.text.paragraph import Paragraph as WordParagraph
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pptx import Presentation
 
 from src import config
 
-DocType = Literal["pdf", "pptx"]
+DocType = Literal["pdf", "pptx", "docx"]
+
+# What one unit of a document is called, per format. PDFs and decks have a
+# fixed, visible location. Word does not: pagination is decided by whatever
+# renders the file, so python-docx cannot report a page number. Headings are
+# the stable anchor a reader can actually search for, so they are the unit.
+LOCATION_KEYS: dict[str, str] = {"pdf": "page", "pptx": "slide", "docx": "section"}
+
+# Close an unlabelled Word section after this many characters, so a document
+# with no headings still yields section numbers that mean something.
+DOCX_SECTION_CHAR_BUDGET = 4000
 
 # Stable namespace so the same (source, location, index) always yields the same
 # point id. Re-indexing an unchanged document overwrites rather than duplicates.
@@ -42,15 +56,29 @@ class DocumentParseError(RuntimeError):
 
 @dataclass(frozen=True)
 class DocumentUnit:
-    """One page of a PDF or one slide of a deck, before chunking."""
+    """One page of a PDF, one slide of a deck, or one section of a Word file."""
 
     text: str
-    index: int  # 1-based page or slide number
+    index: int  # 1-based page, slide or section number
     doc_type: DocType
+    label: str = ""  # Word heading text, when the section has one
 
     @property
     def location_key(self) -> str:
-        return "page" if self.doc_type == "pdf" else "slide"
+        return LOCATION_KEYS[self.doc_type]
+
+
+def format_citation(
+    source: str, doc_type: str, index: int, label: str = ""
+) -> str:
+    """The human-readable source reference shown under an answer."""
+    if doc_type == "pdf":
+        return f"{source} - p. {index}"
+    if doc_type == "pptx":
+        return f"{source} - slide {index}"
+    if label:
+        return f"{source} - {label}"
+    return f"{source} - section {index}"
 
 
 @dataclass(frozen=True)
@@ -67,14 +95,23 @@ class Chunk:
     @property
     def citation(self) -> str:
         """Human-readable source reference, e.g. ``contracts.pdf - p. 12``."""
-        source = self.metadata.get("source", "unknown source")
+        stored = self.metadata.get("citation")
+        if stored:
+            return str(stored)
+
+        source = str(self.metadata.get("source", "unknown source"))
         page = self.metadata.get("page")
         slide = self.metadata.get("slide")
+        section = self.metadata.get("section")
         if page is not None:
-            return f"{source} - p. {page}"
+            return format_citation(source, "pdf", int(page))
         if slide is not None:
-            return f"{source} - slide {slide}"
-        return str(source)
+            return format_citation(source, "pptx", int(slide))
+        if section is not None:
+            return format_citation(
+                source, "docx", int(section), str(self.metadata.get("heading", ""))
+            )
+        return source
 
 
 # --- Text cleaning ----------------------------------------------------------
@@ -194,6 +231,100 @@ def parse_pptx(path: str | Path) -> list[DocumentUnit]:
     return units
 
 
+def _iter_block_items(document):
+    """Yield a Word document's paragraphs and tables in reading order.
+
+    ``document.paragraphs`` and ``document.tables`` are separate collections,
+    so neither preserves the order content appears in. Walking the body XML
+    does, which is what keeps a table attached to the heading above it.
+    """
+    for child in document.element.body.iterchildren():
+        if child.tag == qn("w:p"):
+            yield WordParagraph(child, document)
+        elif child.tag == qn("w:tbl"):
+            yield WordTable(child, document)
+
+
+def _heading_text(paragraph: Any) -> str | None:
+    """The paragraph's text when it is a heading, else None."""
+    style = paragraph.style
+    name = (getattr(style, "name", "") or "") if style is not None else ""
+    is_heading = name == "Title" or name.startswith("Heading")
+    if not is_heading:
+        return None
+    text = (paragraph.text or "").strip()
+    return text or None
+
+
+def _table_lines(table: Any) -> list[str]:
+    lines: list[str] = []
+    for row in table.rows:
+        cells = [cell.text.strip() for cell in row.cells]
+        line = " | ".join(c for c in cells if c)
+        if line:
+            lines.append(line)
+    return lines
+
+
+def parse_docx(path: str | Path) -> list[DocumentUnit]:
+    """Extract one :class:`DocumentUnit` per section of a Word document.
+
+    A section runs from one heading to the next. Word has no page numbers to
+    cite - they are produced by the renderer, not stored in the file - so the
+    heading is the anchor, and an unheaded run of text is closed off by a
+    character budget so its section number still localises the quote.
+    """
+    path = Path(path)
+    try:
+        document = WordDocument(str(path))
+    except Exception as exc:
+        raise DocumentParseError(f"Could not read Word file {path.name!r}: {exc}") from exc
+
+    units: list[DocumentUnit] = []
+    label = ""
+    lines: list[str] = []
+
+    def flush() -> None:
+        nonlocal lines
+        text = clean_text("\n".join(lines))
+        if text:
+            units.append(
+                DocumentUnit(
+                    text=text, index=len(units) + 1, doc_type="docx", label=label
+                )
+            )
+        lines = []
+
+    try:
+        for block in _iter_block_items(document):
+            if isinstance(block, WordTable):
+                lines.extend(_table_lines(block))
+                continue
+
+            heading = _heading_text(block)
+            if heading is not None:
+                flush()
+                label = heading
+                # Keep the heading in the body text so it is embedded with the
+                # content it introduces and can be matched by a query.
+                lines = [heading]
+                continue
+
+            text = (block.text or "").strip()
+            if text:
+                lines.append(text)
+
+            if sum(len(line) for line in lines) >= DOCX_SECTION_CHAR_BUDGET:
+                flush()
+    except DocumentParseError:
+        raise
+    except Exception as exc:
+        raise DocumentParseError(f"Could not read Word file {path.name!r}: {exc}") from exc
+
+    flush()
+    return units
+
+
 # --- Chunking ---------------------------------------------------------------
 
 
@@ -244,10 +375,8 @@ def chunk_units(
             if len(text) < min_chars:
                 continue
 
-            citation = (
-                f"{source} - p. {unit.index}"
-                if unit.doc_type == "pdf"
-                else f"{source} - slide {unit.index}"
+            citation = format_citation(
+                source, unit.doc_type, unit.index, unit.label
             )
             metadata: dict[str, Any] = {
                 "source": source,
@@ -262,6 +391,8 @@ def chunk_units(
                 "n_chars": len(text),
                 "content_hash": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
             }
+            if unit.label:
+                metadata["heading"] = unit.label
 
             chunks.append(Chunk(text=text, metadata=metadata))
             running_index += 1
@@ -279,6 +410,21 @@ def detect_doc_type(filename: str) -> DocType:
         return "pdf"
     if suffix == ".pptx":
         return "pptx"
+    if suffix == ".docx":
+        return "docx"
+
+    # The legacy binary formats are a different file format entirely, not a
+    # variant of the modern one, so say what to do rather than just refusing.
+    legacy = {".doc": "Word", ".ppt": "PowerPoint"}
+    if suffix in legacy:
+        app = legacy[suffix]
+        modern = ".docx" if suffix == ".doc" else ".pptx"
+        raise UnsupportedFileTypeError(
+            f"{filename!r} is in the old {app} format, which cannot be read. "
+            f'Open it in {app} and use "Save As" to save a {modern} copy, '
+            "then upload that."
+        )
+
     supported = ", ".join(config.SUPPORTED_EXTENSIONS)
     raise UnsupportedFileTypeError(
         f"{filename!r} is not a supported file type. Supported: {supported}."
@@ -302,7 +448,8 @@ def ingest_file(
     source = source_name or path.name
     doc_type = detect_doc_type(source)
 
-    units = parse_pdf(path) if doc_type == "pdf" else parse_pptx(path)
+    parsers = {"pdf": parse_pdf, "pptx": parse_pptx, "docx": parse_docx}
+    units = parsers[doc_type](path)
     if not units:
         raise DocumentParseError(
             f"No extractable text found in {source!r}. If it is a scanned PDF, "

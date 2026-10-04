@@ -230,7 +230,7 @@ def test_detect_doc_type_is_case_insensitive(filename: str, expected: str):
     assert detect_doc_type(filename) == expected
 
 
-@pytest.mark.parametrize("filename", ["notes.docx", "notes.ppt", "notes.txt", "notes"])
+@pytest.mark.parametrize("filename", ["notes.txt", "notes.odt", "notes", "notes.pdf.bak"])
 def test_detect_doc_type_rejects_unsupported_extensions(filename: str):
     with pytest.raises(UnsupportedFileTypeError):
         detect_doc_type(filename)
@@ -262,7 +262,7 @@ def test_ingest_file_honours_source_name_override(tmp_path: Path, sample_pdf: Pa
 
 
 def test_ingest_file_rejects_unsupported_types(tmp_path: Path):
-    path = tmp_path / "essay.docx"
+    path = tmp_path / "essay.odt"
     path.write_text("x", encoding="utf-8")
     with pytest.raises(UnsupportedFileTypeError):
         ingest_file(path)

@@ -120,7 +120,7 @@ SCORE_THRESHOLD = 0.45
 
 # --- Uploads ----------------------------------------------------------------
 
-SUPPORTED_EXTENSIONS = (".pdf", ".pptx")
+SUPPORTED_EXTENSIONS = (".pdf", ".pptx", ".docx")
 MAX_FILE_MB = 50
 
 # Subjects offered in the UI. "General" is the fallback when none is chosen.

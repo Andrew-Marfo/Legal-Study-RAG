@@ -21,7 +21,7 @@ from typing import Any, Iterable, Sequence
 from qdrant_client import QdrantClient, models
 
 from src import config
-from src.ingestion import Chunk
+from src.ingestion import Chunk, format_citation
 
 
 class VectorStoreError(RuntimeError):
@@ -52,10 +52,15 @@ class SearchHit:
             return str(stored)
         page = self.metadata.get("page")
         slide = self.metadata.get("slide")
+        section = self.metadata.get("section")
         if page is not None:
-            return f"{self.source} - p. {page}"
+            return format_citation(self.source, "pdf", int(page))
         if slide is not None:
-            return f"{self.source} - slide {slide}"
+            return format_citation(self.source, "pptx", int(slide))
+        if section is not None:
+            return format_citation(
+                self.source, "docx", int(section), str(self.metadata.get("heading", ""))
+            )
         return self.source
 
 

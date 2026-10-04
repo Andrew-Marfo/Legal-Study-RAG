@@ -38,9 +38,15 @@ def test_a_good_file_passes_validation():
     assert _validate("notes.pdf", 1024) is None
 
 
-def test_an_unsupported_extension_is_rejected():
-    message = _validate("essay.docx", 1024)
+@pytest.mark.parametrize("name", ["notes.txt", "notes.odt", "notes.pages", "scan.jpg"])
+def test_an_unsupported_extension_is_rejected(name: str):
+    message = _validate(name, 1024)
     assert message and "unsupported file type" in message
+
+
+@pytest.mark.parametrize("name", ["notes.pdf", "deck.pptx", "essay.docx"])
+def test_every_advertised_extension_passes_validation(name: str):
+    assert _validate(name, 1024) is None
 
 
 def test_an_oversized_file_is_rejected_with_its_size():
@@ -78,6 +84,13 @@ def test_a_pptx_that_is_not_a_zip_reports_rather_than_crashes(tmp_path: Path):
 def test_a_missing_file_reports_rather_than_crashes(tmp_path: Path):
     with pytest.raises(DocumentParseError):
         ingest_file(tmp_path / "does-not-exist.pdf")
+
+
+def test_a_legacy_word_file_is_rejected_with_a_conversion_hint(tmp_path: Path):
+    path = tmp_path / "old-notes.doc"
+    path.write_bytes(bytes([0xD0, 0xCF, 0x11, 0xE0]))  # OLE2 magic: real .doc
+    with pytest.raises(UnsupportedFileTypeError, match="Save As"):
+        ingest_file(path)
 
 
 def test_an_extensionless_file_is_rejected(tmp_path: Path):
@@ -167,4 +180,4 @@ def test_whitespace_only_secrets_count_as_missing():
 
 
 def test_supported_extensions_match_the_uploader_filter():
-    assert set(config.SUPPORTED_EXTENSIONS) == {".pdf", ".pptx"}
+    assert set(config.SUPPORTED_EXTENSIONS) == {".pdf", ".pptx", ".docx"}

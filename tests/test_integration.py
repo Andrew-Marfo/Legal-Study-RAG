@@ -147,3 +147,53 @@ def test_deleting_a_document_removes_it_from_retrieval(
     assert rag.retrieve("What is an offer?", store=store)
     store.delete_source("contracts.pdf")
     assert rag.retrieve("What is an offer?", store=store) == []
+
+
+# --- Word documents ---------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def word_store(tmp_path_factory, sample_docx: Path) -> VectorStore:
+    client = QdrantClient(path=str(tmp_path_factory.mktemp("kb3") / "store"))
+    store = VectorStore(
+        client=client,
+        collection="word_integration",
+        dimensions=config.embedding_dimensions(),
+    )
+    store.ensure_collection()
+    chunks = ingest_file(sample_docx, subject="Contracts")
+    store.upsert_chunks(chunks, embeddings.embed_chunks(chunks))
+    return store
+
+
+def test_a_word_document_is_retrievable_and_cites_its_heading(
+    word_store: VectorStore,
+):
+    hits = rag.retrieve("What is promissory estoppel?", store=word_store, top_k=3)
+    assert hits
+    top = hits[0]
+    assert top.metadata["source"] == "contract-notes.docx"
+    assert top.metadata["doc_type"] == "docx"
+    assert top.metadata["heading"] == "Promissory Estoppel"
+    assert top.citation == "contract-notes.docx - Promissory Estoppel"
+
+
+def test_word_retrieval_resolves_to_the_right_section(word_store: VectorStore):
+    hits = rag.retrieve(
+        "What are the elements needed to form a contract?",
+        store=word_store,
+        top_k=3,
+    )
+    assert hits
+    assert hits[0].metadata["heading"] == "Formation of Contract"
+
+
+def test_a_table_inside_a_word_document_is_retrievable(word_store: VectorStore):
+    hits = rag.retrieve("High Trees House", store=word_store, top_k=5)
+    assert any("Central London Property" in hit.text for hit in hits)
+
+
+def test_the_word_knowledge_base_lists_the_document(word_store: VectorStore):
+    summaries = word_store.list_sources()
+    assert [s.source for s in summaries] == ["contract-notes.docx"]
+    assert summaries[0].doc_type == "docx"
