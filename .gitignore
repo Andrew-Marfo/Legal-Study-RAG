@@ -1,0 +1,37 @@
+# Environment / secrets
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.Python
+.venv/
+venv/
+env/
+
+# Local vector store (embedded dev fallback)
+.local_store/
+.chroma/
+
+# Caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.cache/
+*.log
+
+# Local model cache (if HF_HOME is pointed here)
+.hf_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+
+# Streamlit local secrets
+.streamlit/secrets.toml

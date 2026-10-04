@@ -1,0 +1,14 @@
+# Pinned for reproducible Hugging Face Space builds.
+#
+# The CPU-only PyTorch index keeps the Space image small: the default PyPI
+# linux wheel bundles CUDA (~900MB) that a free CPU Space can never use.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+streamlit==1.65.0
+pymupdf==1.28.2
+python-pptx==1.0.2
+langchain-text-splitters==1.1.3
+sentence-transformers==6.1.0
+qdrant-client==1.19.1
+groq==1.7.0
+python-dotenv==1.2.4
