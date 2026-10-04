@@ -24,11 +24,11 @@ file and page or slide behind every answer.
 
 ## What it does
 
-- **Upload** `.pdf` and `.pptx` files through the browser; they are parsed,
-  chunked, embedded and indexed live.
+- **Upload** `.pdf`, `.pptx` and `.docx` files through the browser; they are
+  parsed, chunked, embedded and indexed live.
 - **Ask** natural-language questions and get answers grounded in those
-  documents, with `[1]`-style markers tied to `file.pdf — p. 12` /
-  `deck.pptx — slide 4`.
+  documents, with `[1]`-style markers tied to `file.pdf — p. 12`,
+  `deck.pptx — slide 4` or `notes.docx — Promissory Estoppel`.
 - **Scope** questions by subject (Contracts, Torts, …) or to specific documents.
 - **Study tools**: summarise a topic, generate practice questions, define a term
   — all from your materials, all cited.
@@ -55,7 +55,7 @@ grounding is enforced in three independent places:
 ## Architecture
 
 ```
-UPLOAD   file → parse (PyMuPDF / python-pptx) → chunk with metadata
+UPLOAD   file → parse (PyMuPDF / python-pptx / python-docx) → chunk + metadata
                 → embed (bge-base, local CPU) → upsert to Qdrant
 
 QUERY    question → embed → Qdrant search (top-k, subject/source filter)
@@ -70,7 +70,7 @@ survive a Space sleeping or rebuilding.
 |---|---|
 | Language | Python 3.11 |
 | UI / host | Streamlit on Hugging Face Spaces (`sdk: streamlit`, free CPU Basic) |
-| PDF / PPTX | `pymupdf` · `python-pptx` |
+| PDF / PPTX / DOCX | `pymupdf` · `python-pptx` · `python-docx` |
 | Chunking | `langchain-text-splitters` (`RecursiveCharacterTextSplitter`) |
 | Embeddings | `sentence-transformers`, `BAAI/bge-base-en-v1.5` (local, CPU, 768-dim) |
 | Vector store | Qdrant Cloud (free 1 GB) · embedded local mode for offline dev |
@@ -83,7 +83,7 @@ survive a Space sleeping or rebuilding.
 ```
 app.py                  Streamlit UI: upload, knowledge base, chat, study tools
 src/config.py           Env vars, model names, chunking and retrieval constants
-src/ingestion.py        PDF/PPTX → metadata-rich chunks
+src/ingestion.py        PDF/PPTX/DOCX → metadata-rich chunks
 src/embeddings.py       bge-base loader, document/query embedding
 src/vector_store.py     Qdrant wrapper: collection, upsert, search, listing
 src/prompts.py          Grounding system prompt + study-task instructions
@@ -168,6 +168,13 @@ USE_LOCAL_STORE=true GROQ_API_KEY=... streamlit run app.py
 
 - **Scanned PDFs are not supported.** Text is extracted, not OCR'd; an
   image-only PDF is rejected with a message saying so.
+- **Word files are cited by heading, not page.** Word stores no page numbers —
+  pagination is produced by whatever renders the document — so a `.docx` chunk
+  cites the heading it sits under, falling back to a section number when the
+  document has no headings. Well-structured notes therefore cite far more
+  precisely than one unbroken wall of text.
+- **Legacy `.doc` and `.ppt` are not readable.** They are a different binary
+  format; the app says so and asks for a `.docx`/`.pptx` copy instead.
 - **Groq free tier** is roughly 30 requests/minute and ~1,000/day. Fine for one
   student, not for a public audience.
 - **Cold starts.** Free Spaces sleep when idle; the first question after a wake
