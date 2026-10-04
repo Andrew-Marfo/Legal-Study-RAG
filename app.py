@@ -57,11 +57,12 @@ def list_sources_cached() -> list[SourceSummary]:
     Deliberately not keyed on a session counter: ``st.cache_data`` is shared
     across sessions, so a session-scoped key would serve one session a result
     cached under another session's counter. Writes call ``.clear()`` instead.
+
+    Errors deliberately propagate. Returning an empty list on failure would
+    make a store outage look exactly like an empty library, and a student
+    would reasonably conclude her documents had been lost and re-upload them.
     """
-    try:
-        return get_store().list_sources()
-    except VectorStoreError:
-        return []
+    return get_store().list_sources()
 
 
 def invalidate_kb_cache() -> None:
@@ -116,7 +117,10 @@ def _validate_upload(upload) -> str | None:
     """Return an error message, or None when the file is acceptable."""
     suffix = Path(upload.name).suffix.lower()
     if suffix not in config.SUPPORTED_EXTENSIONS:
-        return f"{upload.name}: unsupported file type (need .pdf or .pptx)."
+        return (
+            f"{upload.name}: unsupported file type "
+            f"(need {' or '.join(config.SUPPORTED_EXTENSIONS)})."
+        )
     size_mb = upload.size / (1024 * 1024)
     if size_mb > config.MAX_FILE_MB:
         return (
@@ -156,8 +160,8 @@ def render_upload_panel(store: VectorStore, sources: Sequence[SourceSummary]) ->
 
     uploader_key = f"uploader_{st.session_state.get('uploader_round', 0)}"
     uploads = st.file_uploader(
-        "PDFs and lecture slides",
-        type=["pdf", "pptx"],
+        "PDFs, lecture slides and Word documents",
+        type=["pdf", "pptx", "docx"],
         accept_multiple_files=True,
         key=uploader_key,
         help=f"Up to {config.MAX_FILE_MB} MB per file.",
@@ -243,14 +247,17 @@ def render_knowledge_base(store: VectorStore, sources: Sequence[SourceSummary]) 
     st.subheader("Knowledge base")
 
     if not sources:
-        st.info("No documents indexed yet. Upload a PDF or a deck above.", icon="📭")
+        st.info(
+            "No documents indexed yet. Upload a PDF, a deck or a Word file above.",
+            icon="📭",
+        )
         return
 
     total_chunks = sum(s.chunk_count for s in sources)
     st.caption(f"**{len(sources)}** document(s) · **{total_chunks}** chunks")
 
     for summary in sources:
-        icon = "📄" if summary.doc_type == "pdf" else "📊"
+        icon = {"pdf": "📄", "pptx": "📊", "docx": "📝"}.get(summary.doc_type, "📄")
         with st.expander(f"{icon} {summary.source}", expanded=False):
             st.caption(
                 f"Subject: **{summary.subject}** · {summary.chunk_count} chunks"
@@ -422,7 +429,16 @@ def main() -> None:
         st.error(str(exc), icon="🚨")
         return
 
-    sources = list_sources_cached()
+    try:
+        sources = list_sources_cached()
+    except VectorStoreError as exc:
+        st.error(f"Could not read the knowledge base: {exc}", icon="🚨")
+        st.caption(
+            "This is a connection problem, not data loss - indexed documents "
+            "live in Qdrant, not in this app. Check `QDRANT_URL` and "
+            "`QDRANT_API_KEY`, and that the cluster is running."
+        )
+        return
 
     with st.sidebar:
         render_upload_panel(store, sources)
@@ -438,7 +454,8 @@ def main() -> None:
 
     if not sources:
         st.info(
-            "Upload your course PDFs or lecture slides in the sidebar to get started.",
+            "Upload your course PDFs, lecture slides or Word documents in the "
+            "sidebar to get started.",
             icon="👈",
         )
         return
