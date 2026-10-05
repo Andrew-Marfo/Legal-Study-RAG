@@ -1,15 +1,15 @@
-# Pinned for reproducible Hugging Face Space builds.
+# Pinned for reproducible deploys.
 #
-# The CPU-only PyTorch index keeps the Space image small: the default PyPI
-# linux wheel bundles CUDA (~900MB) that a free CPU Space can never use.
---extra-index-url https://download.pytorch.org/whl/cpu
-
+# Embeddings run through fastembed (onnxruntime) rather than
+# sentence-transformers (PyTorch). Same BAAI/bge-base-en-v1.5 weights and the
+# same 768-dim vectors, but ~566MB peak RSS instead of ~1381MB, which is what
+# lets the app fit a 1GB free-tier host. It also drops the ~1GB torch install.
 streamlit==1.65.0
 pymupdf==1.28.2
 python-pptx==1.0.2
 python-docx==1.2.0
 langchain-text-splitters==1.1.3
-sentence-transformers==6.1.0
+fastembed==0.8.1
 qdrant-client==1.19.1
 groq==1.7.0
 python-dotenv==1.2.4

@@ -58,17 +58,14 @@ def test_progress_callback_reports_completion():
 
 
 def test_the_bge_query_prefix_is_applied_to_queries_only(monkeypatch):
+    """fastembed does not prefix queries itself, so we must - and only there."""
     captured: list[str] = []
 
     class Recorder:
-        def encode(self, text, **kwargs):
-            captured.append(text if isinstance(text, str) else text[0])
-            import numpy as np
-
+        def embed(self, texts, **kwargs):
+            captured.extend(texts)
             size = config.embedding_dimensions()
-            if isinstance(text, str):
-                return np.zeros(size)
-            return np.zeros((len(text), size))
+            return iter([[0.0] * size for _ in texts])
 
     monkeypatch.setattr(embeddings, "get_model", lambda name=None: Recorder())
     embeddings.embed_query("what is an offer?")
@@ -76,6 +73,31 @@ def test_the_bge_query_prefix_is_applied_to_queries_only(monkeypatch):
 
     assert captured[0].startswith(config.BGE_QUERY_PREFIX)
     assert not captured[1].startswith(config.BGE_QUERY_PREFIX)
+
+
+def test_a_non_bge_model_gets_no_query_prefix(monkeypatch):
+    captured: list[str] = []
+
+    class Recorder:
+        def embed(self, texts, **kwargs):
+            captured.extend(texts)
+            return iter([[0.0] * 384 for _ in texts])
+
+    monkeypatch.setattr(embeddings, "get_model", lambda name=None: Recorder())
+    embeddings.embed_query(
+        "what is an offer?", model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
+    assert captured[0] == "what is an offer?"
+
+
+def test_the_onnx_backend_is_in_use_rather_than_torch():
+    """Guards the memory budget: importing torch would blow the 1GB host."""
+    import sys
+
+    embeddings.get_model.cache_clear()
+    embeddings.embed_documents(["a short passage about consideration"])
+    assert "torch" not in sys.modules
+    assert "fastembed" in sys.modules
 
 
 def test_retrieval_ranks_the_relevant_passage_first():

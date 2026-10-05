@@ -62,12 +62,14 @@ EMBED_MODEL = _env("EMBED_MODEL", "BAAI/bge-base-en-v1.5")
 
 # Vector dimensions per supported embedding model. Used to size the Qdrant
 # collection; a mismatch here silently breaks search, so keep it explicit.
+# Every name here must be one fastembed recognises - check against
+# TextEmbedding.list_supported_models() before adding to this table. The bare
+# "all-MiniLM-L6-v2" shorthand is sentence-transformers' and is NOT valid.
 EMBED_DIMENSIONS: dict[str, int] = {
     "BAAI/bge-base-en-v1.5": 768,
     "BAAI/bge-small-en-v1.5": 384,
     "BAAI/bge-large-en-v1.5": 1024,
     "sentence-transformers/all-MiniLM-L6-v2": 384,
-    "all-MiniLM-L6-v2": 384,
 }
 
 # bge models are trained with an instruction prefix on the *query* side only.
