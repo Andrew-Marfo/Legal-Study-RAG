@@ -6,20 +6,35 @@ middle. Every answer is rendered with the file and page or slide it came from.
 
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 from typing import Sequence
 
 import streamlit as st
 
-from src import config, embeddings, prompts, rag
-from src.ingestion import (
+# Streamlit Community Cloud supplies configuration through st.secrets, while
+# local development and most other hosts use environment variables. Copy one
+# into the other before src.config is imported, so there is a single way to
+# read configuration everywhere. setdefault means a real environment variable
+# still wins, which keeps local overrides working.
+try:  # pragma: no cover - depends on the host, not on our logic
+    for _key, _value in st.secrets.items():
+        if isinstance(_value, (str, int, float, bool)):
+            os.environ.setdefault(_key, str(_value))
+except Exception:
+    # No secrets.toml and no Cloud secrets configured: fall back to the
+    # environment alone. config.missing_secrets() reports anything absent.
+    pass
+
+from src import config, embeddings, prompts, rag  # noqa: E402
+from src.ingestion import (  # noqa: E402
     Chunk,
     DocumentParseError,
     UnsupportedFileTypeError,
     ingest_file,
 )
-from src.vector_store import (
+from src.vector_store import (  # noqa: E402
     DimensionMismatchError,
     SearchHit,
     SourceSummary,
