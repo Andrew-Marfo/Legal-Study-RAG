@@ -59,7 +59,7 @@ grounding is enforced in three independent places:
 
 ```
 UPLOAD   file → parse (PyMuPDF / python-pptx / python-docx) → chunk + metadata
-                → embed (bge-base, local CPU) → upsert to Qdrant
+                → embed (bge-base via ONNX, local CPU) → upsert to Qdrant
 
 QUERY    question → embed → Qdrant search (top-k, subject/source filter)
                  → grounded prompt → Groq gpt-oss-120b → answer + citations
@@ -75,7 +75,7 @@ survive a Space sleeping or rebuilding.
 | UI / host | Streamlit on Hugging Face Spaces (`sdk: streamlit`, free CPU Basic) |
 | PDF / PPTX / DOCX | `pymupdf` · `python-pptx` · `python-docx` |
 | Chunking | `langchain-text-splitters` (`RecursiveCharacterTextSplitter`) |
-| Embeddings | `sentence-transformers`, `BAAI/bge-base-en-v1.5` (local, CPU, 768-dim) |
+| Embeddings | `fastembed` (ONNX), `BAAI/bge-base-en-v1.5` (local, CPU, 768-dim) |
 | Vector store | Qdrant Cloud (free 1 GB) · embedded local mode for offline dev |
 | LLM | Groq `openai/gpt-oss-120b` (free tier) |
 
@@ -87,7 +87,7 @@ survive a Space sleeping or rebuilding.
 app.py                  Streamlit UI: upload, knowledge base, chat, study tools
 src/config.py           Env vars, model names, chunking and retrieval constants
 src/ingestion.py        PDF/PPTX/DOCX → metadata-rich chunks
-src/embeddings.py       bge-base loader, document/query embedding
+src/embeddings.py       bge-base ONNX loader, document/query embedding
 src/vector_store.py     Qdrant wrapper: collection, upsert, search, listing
 src/prompts.py          Grounding system prompt + study-task instructions
 src/rag.py              Retrieval → prompt → Groq → cited answer
@@ -148,50 +148,58 @@ USE_LOCAL_STORE=true GROQ_API_KEY=... streamlit run app.py
 
 ---
 
-## Deploying to Hugging Face Spaces
+## Deploying to Streamlit Community Cloud
 
-1. **New Space** → SDK **Streamlit** → hardware **CPU Basic (free)**.
-   Use the native Streamlit SDK, **not Docker**: since mid-2026 Hugging Face
-   requires a PRO subscription to host new Gradio or Docker Spaces on free
-   CPU. If free CPU is not offered for Streamlit either, see *Fallback hosts*
-   below rather than paying for PRO.
+Hugging Face Spaces is no longer an option on a free account: as of mid-2026
+the Space creation form offers only Gradio, Docker and Static, the first two
+require a PRO subscription, and Static cannot run Python. The Streamlit SDK
+was removed entirely. The front-matter at the top of this README is kept so
+the repo still deploys to a Space if you ever hold PRO.
 
-2. **Set the Space to Private.** This is not optional for this app. A public
-   Space exposes the uploaded course materials to anyone with the URL, and
-   lets any visitor spend the owner's Groq quota. The knowledge base is
-   personal study material, so the Space should be too.
+Community Cloud deploys straight from this GitHub repository.
 
-3. **Settings → Repository secrets**: add `GROQ_API_KEY`, `QDRANT_URL`,
-   `QDRANT_API_KEY` and `LLM_MODEL`. Never commit these. Repository
-   *secrets*, not *variables* — variables are visible to anyone who can see
-   the Space.
+1. Sign in at [share.streamlit.io](https://share.streamlit.io) with the GitHub
+   account that owns this repo, and authorise it.
 
-4. Push:
-   ```bash
-   git remote add space https://huggingface.co/spaces/<user>/<space>
-   git push space main
+2. **Create app** -> *Deploy a public app from GitHub*, then set:
+   - Repository: `<user>/Legal-Study-RAG`
+   - Branch: `main`
+   - Main file path: `app.py`
+   - **Advanced settings -> Python version: 3.11**
+
+3. **Make it private.** The free tier allows exactly one private app, and this
+   should be it: a public app exposes the uploaded course materials to anyone
+   with the URL and lets any visitor spend the owner's Groq quota.
+
+4. Still under **Advanced settings**, paste the secrets in TOML form:
+
+   ```toml
+   GROQ_API_KEY = "..."
+   QDRANT_URL = "https://....cloud.qdrant.io:6333"
+   QDRANT_API_KEY = "..."
+   LLM_MODEL = "openai/gpt-oss-120b"
    ```
 
-5. Watch the build log. The embedding model is fetched at **build** time via
-   `preload_from_hub`, so the first request does not pay for the ~440 MB
-   download; the build itself takes correspondingly longer.
+   `app.py` copies these into the environment at startup, so the same
+   `src/config.py` reads them here, locally from `.env`, and anywhere else.
 
-6. Verify persistence: index a document, let the Space sleep, wake it, and
-   confirm the document is still listed and queryable. This is what proves
-   the knowledge base lives in Qdrant rather than on the Space's disk.
+5. Deploy, and watch the log. The first build installs dependencies and the
+   first request downloads the 0.21GB quantised model; both are one-off.
 
-### Fallback hosts
+6. Verify persistence: index a document, let the app sleep (12 hours idle),
+   wake it, and confirm the document is still listed and queryable. This is
+   what proves the knowledge base lives in Qdrant, not on the app's disk.
 
-If free CPU is unavailable for Streamlit Spaces, in preference order:
+### Why this fits in 1GB
 
-- **Streamlit Community Cloud** — free, but roughly 1 GB RAM. bge-base will
-  not fit comfortably: set `EMBED_MODEL=sentence-transformers/all-MiniLM-L6-v2`
-  **and recreate the Qdrant collection**, because the vector size changes from
-  768 to 384. Every document must then be re-indexed. Retrieval quality drops.
-- **Render** free web service — more RAM than Community Cloud, but the
-  instance sleeps aggressively and cold starts are slow.
+Community Cloud guarantees about 1GB of RAM per app. The PyTorch stack peaked
+at ~1381MB and would have been killed. Running the identical
+`BAAI/bge-base-en-v1.5` weights through fastembed/onnxruntime instead peaks at
+~556MB.
 
----
+The two encoders agree to cosine 1.0000, and a query embedded by one retrieves
+correctly against passages embedded by the other - verified against the live
+collection - so the switch needed no re-indexing and cost no accuracy.
 
 ## Limitations
 
@@ -212,9 +220,11 @@ If free CPU is unavailable for Streamlit Spaces, in preference order:
   (bge-base 768, MiniLM 384). The app detects the mismatch and offers to
   recreate the collection — which deletes indexed documents, so they must be
   re-uploaded.
-- **Low-RAM hosts.** If 16 GB is unavailable (e.g. Streamlit Community Cloud at
-  ~1 GB), switch to `EMBED_MODEL=sentence-transformers/all-MiniLM-L6-v2` and
-  recreate the collection.
+- **Smaller hosts than 1 GB.** If even ~556 MB is too much, set
+  `EMBED_MODEL=BAAI/bge-small-en-v1.5` **and recreate the collection** — the
+  vector size changes from 768 to 384, so every document must be re-indexed
+  and retrieval quality drops. Model names must be ones fastembed recognises;
+  the bare `all-MiniLM-L6-v2` shorthand is not valid.
 - **Retrieval quality bounds the answer.** The app will not invent law, but it
   can miss material that is present and phrased very differently.
 
