@@ -26,16 +26,35 @@ from src import config
 ProgressCallback = Callable[[int, int], None]
 
 
-@lru_cache(maxsize=1)
 def get_model(model_name: str | None = None):
     """Load (and memoise) the ONNX embedding model.
 
     The import is deferred so that modules which only need chunking - and the
     fast tests - do not pay the onnxruntime import cost.
+
+    The name is resolved *before* the cache lookup. Caching on the raw
+    argument made ``get_model()`` (indexing) and ``get_model("BAAI/...")``
+    (queries) separate cache keys, so the app held two copies of the model -
+    an extra ~400MB that pushed uploads over the host's memory limit.
     """
+    return _load_model(model_name or config.EMBED_MODEL)
+
+
+get_model.cache_clear = lambda: _load_model.cache_clear()  # type: ignore[attr-defined]
+
+
+@lru_cache(maxsize=1)
+def _load_model(model_name: str):
     from fastembed import TextEmbedding
 
-    return TextEmbedding(model_name=model_name or config.EMBED_MODEL)
+    # onnxruntime's CPU arena keeps every buffer it grows into, which roughly
+    # doubles peak memory while indexing and gets the app killed on a free
+    # host. See EMBED_BATCH_SIZE in config for the measurements.
+    return TextEmbedding(
+        model_name=model_name,
+        threads=config.EMBED_THREADS,
+        enable_cpu_mem_arena=False,
+    )
 
 
 def _needs_query_prefix(model_name: str) -> bool:
@@ -48,8 +67,13 @@ def _encode(model, texts: Sequence[str]) -> list[list[float]]:
 
     fastembed yields numpy arrays lazily; materialising them here keeps numpy
     types out of the rest of the codebase, including the Qdrant payloads.
+    ``batch_size`` is explicit because fastembed's default (256) would
+    otherwise set peak activation memory.
     """
-    return [[float(x) for x in vector] for vector in model.embed(list(texts))]
+    return [
+        [float(x) for x in vector]
+        for vector in model.embed(list(texts), batch_size=config.EMBED_BATCH_SIZE)
+    ]
 
 
 def embed_documents(
