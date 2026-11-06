@@ -75,7 +75,13 @@ EMBED_DIMENSIONS: dict[str, int] = {
 # bge models are trained with an instruction prefix on the *query* side only.
 BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
-EMBED_BATCH_SIZE = 32
+# Memory, not speed, is the constraint on Streamlit Community Cloud: going
+# over the limit kills the app mid-upload. Measured peak RSS while indexing
+# (bge-base, 240 chunks): 1241MB with fastembed's defaults, 625MB with batch 8,
+# 2 threads and onnxruntime's CPU memory arena disabled - about 30% slower.
+# Override via env on a bigger host.
+EMBED_BATCH_SIZE = int(_env("EMBED_BATCH_SIZE", "8"))
+EMBED_THREADS = int(_env("EMBED_THREADS", "2"))
 
 # --- Chunking ---------------------------------------------------------------
 
