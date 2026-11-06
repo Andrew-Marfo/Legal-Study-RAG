@@ -34,7 +34,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 # --- Application ------------------------------------------------------------
 
-APP_TITLE = "Legal Study Assistant"
+APP_TITLE = "Hillary's Legal Study Assistant"
 APP_ICON = "⚖️"
 APP_TAGLINE = "Ask questions about your own course materials — with sources."
 
