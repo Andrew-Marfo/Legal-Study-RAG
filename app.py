@@ -6,6 +6,7 @@ middle. Every answer is rendered with the file and page or slide it came from.
 
 from __future__ import annotations
 
+import gc
 import os
 import tempfile
 from pathlib import Path
@@ -83,6 +84,45 @@ def list_sources_cached() -> list[SourceSummary]:
 def invalidate_kb_cache() -> None:
     """Call after any write so the sidebar reflects it immediately."""
     list_sources_cached.clear()
+
+
+# --- Hot-reload hygiene -----------------------------------------------------
+#
+# When a file under src/ changes (a git push on Streamlit Cloud), Streamlit
+# unloads and re-imports every src.* module, but st.cache_resource objects
+# survive. The cached VectorStore then builds SourceSummary objects from the
+# *old* class, which st.cache_data can no longer pickle
+# (UnserializableReturnValueError), and the cached embedding model is a second
+# copy next to the one the reloaded embeddings module loads - roughly 400MB
+# extra on a host where memory is the binding limit. So: on the first run after
+# the modules are re-imported, drop every cache built by the old code, before
+# anything rebuilds them. Module identity is the signal rather than file
+# contents, because Streamlit re-imports src.* on any watched change - an edit
+# to app.py alone included.
+
+
+@st.cache_resource
+def _loaded_code() -> dict[str, type | None]:
+    """Process-wide record of which VectorStore class the caches were built with.
+
+    The class object itself, not its id(): once the old module is freed, a new
+    one could reuse the address and the reload would go unnoticed.
+    """
+    return {"store_class": None}
+
+
+def drop_caches_from_old_code() -> None:
+    loaded = _loaded_code()
+    previous = loaded["store_class"]
+    loaded["store_class"] = VectorStore
+    if previous is not None and previous is not VectorStore:
+        del previous
+        get_store.clear()
+        load_embedding_model.clear()
+        list_sources_cached.clear()
+        # The old modules form reference cycles; free the old model now
+        # rather than whenever the collector next runs.
+        gc.collect()
 
 
 # --- Header -----------------------------------------------------------------
@@ -420,6 +460,7 @@ def render_study_tools(
 
 
 def main() -> None:
+    drop_caches_from_old_code()
     render_header()
 
     missing = config.missing_secrets()
