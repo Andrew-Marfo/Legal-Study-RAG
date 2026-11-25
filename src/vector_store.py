@@ -118,6 +118,9 @@ class VectorStore:
         """Create the collection if absent; verify its vector size if present."""
         if self.collection_exists():
             self._assert_dimensions()
+            # Collections created before the named-case lookup lack its
+            # indexes; creating an existing index is a no-op.
+            self._ensure_payload_indexes()
             return
 
         try:
@@ -157,17 +160,31 @@ class VectorStore:
     def _ensure_payload_indexes(self) -> None:
         """Index the fields used as retrieval filters.
 
-        Embedded mode ignores payload indexes (and warns about it); filtering
-        still works there, just without the index. Neither case is fatal.
+        ``text`` gets a full-text index and ``chunk_index`` an integer index for
+        the named-case lookup: Qdrant Cloud refuses text and range filters on
+        unindexed fields. Embedded mode ignores payload indexes (and warns
+        about it); filtering still works there, just without the index.
+        Neither case is fatal.
         """
-        for field in ("subject", "source"):
+        schemas: dict[str, Any] = {
+            "subject": models.PayloadSchemaType.KEYWORD,
+            "source": models.PayloadSchemaType.KEYWORD,
+            "chunk_index": models.PayloadSchemaType.INTEGER,
+            "text": models.TextIndexParams(
+                type=models.TextIndexType.TEXT,
+                tokenizer=models.TokenizerType.WORD,
+                lowercase=True,
+                min_token_len=2,
+            ),
+        }
+        for field, schema in schemas.items():
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", UserWarning)
                     self.client.create_payload_index(
                         collection_name=self.collection,
                         field_name=field,
-                        field_schema=models.PayloadSchemaType.KEYWORD,
+                        field_schema=schema,
                     )
             except Exception:
                 pass

@@ -126,6 +126,41 @@ TOP_K = 6
 # actually answer the question. Threshold and prompt are both load-bearing.
 SCORE_THRESHOLD = 0.45
 
+# --- Named-case lookup ------------------------------------------------------
+
+# When a question names a case ("summarise Ohimen v Adjei"), the judgment is
+# read from its heading onwards instead of being searched for semantically
+# (see src/case_lookup.py). The budget is set by Groq's free tier: 8,000 tokens
+# per minute, counting LLM_MAX_TOKENS of answer. 14,000 characters is about
+# 3,500 tokens of judgment, leaving room for the system prompt and the answer.
+CASE_READ_MAX_CHARS = int(_env("CASE_READ_MAX_CHARS", "14000"))
+CASE_READ_MAX_CHUNKS = 40
+
+# --- Case examples ----------------------------------------------------------
+
+# A curated library of landmark cases, shown under answers as worked examples.
+# It lives in the repo (data/cases.json) and is embedded into its own Qdrant
+# collection, separate from the student's documents. Edit the JSON to add
+# cases; the collection is rebuilt automatically when the file changes.
+CASES_PATH = Path(_env("CASES_PATH") or PROJECT_ROOT / "data" / "cases.json")
+CASES_COLLECTION = _env("CASES_COLLECTION", "legal_cases")
+CASE_TOP_K = 2
+# Calibrated like SCORE_THRESHOLD above, on question-vs-case scores with
+# bge-base-en-v1.5 over the starter library in data/cases.json:
+#
+#   questions the library covers      best match 0.57 - 0.82
+#   legal topics it does not cover    best match 0.44 - 0.60  (chieftaincy,
+#                                     divorce, allodial title, perpetuities)
+#   non-legal                         best match 0.31 - 0.48
+#
+# 0.60 never shows an unrelated case, at the cost of staying silent on a few
+# very broad questions ("what amounts to battery?"). A wrong authority is
+# worse than none, so precision wins.
+CASE_MIN_SCORE = 0.60
+# A second case is shown only if it scores within this margin of the best,
+# so a strong match is not diluted by a weak runner-up.
+CASE_SCORE_MARGIN = 0.04
+
 # --- Uploads ----------------------------------------------------------------
 
 SUPPORTED_EXTENSIONS = (".pdf", ".pptx", ".docx")

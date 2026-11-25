@@ -29,6 +29,12 @@ except Exception:
     pass
 
 from src import config, embeddings, prompts, rag  # noqa: E402
+from src.cases import (  # noqa: E402
+    CaseLibrary,
+    CaseLibraryError,
+    CaseMatch,
+    match_question,
+)
 from src.ingestion import (  # noqa: E402
     Chunk,
     DocumentParseError,
@@ -64,6 +70,14 @@ def get_store() -> VectorStore:
 @st.cache_resource(show_spinner="Loading the embedding model (first run is slow)...")
 def load_embedding_model():
     return embeddings.get_model()
+
+
+@st.cache_resource(show_spinner="Preparing the case library (first run only)...")
+def get_case_library() -> CaseLibrary:
+    """The curated case collection, rebuilt only when data/cases.json changes."""
+    library = CaseLibrary(get_store().client)
+    library.sync()
+    return library
 
 
 @st.cache_data(show_spinner=False, ttl=300)
@@ -119,6 +133,7 @@ def drop_caches_from_old_code() -> None:
         del previous
         get_store.clear()
         load_embedding_model.clear()
+        get_case_library.clear()
         list_sources_cached.clear()
         # The old modules form reference cycles; free the old model now
         # rather than whenever the collector next runs.
@@ -339,10 +354,47 @@ def render_citations(hits: Sequence[SearchHit]) -> None:
         return
     with st.expander(f"Sources ({len(hits)} excerpt(s))", expanded=False):
         for position, hit in enumerate(hits, start=1):
-            st.markdown(f"**[{position}] {hit.citation}** · similarity {hit.score:.2f}")
+            how = (
+                "matched by case name"
+                if hit.metadata.get("matched_by") == "case name"
+                else f"similarity {hit.score:.2f}"
+            )
+            st.markdown(f"**[{position}] {hit.citation}** · {how}")
             st.caption(hit.text)
             if position < len(hits):
                 st.divider()
+
+
+def render_cases(matches: Sequence[CaseMatch]) -> None:
+    """Case-example cards under an answer, in the style of a case digest."""
+    if not matches:
+        return
+    st.markdown("##### ⚖️ Related case" + ("s" if len(matches) > 1 else ""))
+    for match in matches:
+        case = match.case
+        with st.container(border=True):
+            st.markdown(f"**{case.name}**")
+            details = [case.citation, case.court, str(case.year), case.jurisdiction]
+            st.caption(" · ".join(part for part in details if part))
+            st.markdown(f"**Principle:** {case.principle}")
+            with st.expander("Read brief"):
+                st.markdown(f"**Facts.** {case.facts}")
+                st.markdown(f"**Held.** {case.held}")
+    st.caption(
+        "Suggested from the app's case library, not from your uploaded "
+        "materials. Check the law report before you cite it."
+    )
+
+
+def find_related_cases(question: str) -> list[CaseMatch]:
+    """Cases for an answer. A failure here must never cost the student the answer."""
+    try:
+        return match_question(question, get_case_library())
+    except (CaseLibraryError, VectorStoreError) as exc:
+        st.caption(f"Related cases are unavailable right now: {exc}")
+    except Exception as exc:  # last-resort guard, same reasoning
+        st.caption(f"Related cases are unavailable right now: {exc}")
+    return []
 
 
 # --- Ask tab ----------------------------------------------------------------
@@ -368,6 +420,7 @@ def render_chat(store: VectorStore, subject: str | None, sources: list[str]) -> 
                     st.caption("_Interrupted - ask again to get an answer._")
                 if message["role"] == "assistant":
                     render_citations(message.get("hits", []))
+                    render_cases(message.get("cases", []))
 
         if not question:
             return
@@ -379,7 +432,7 @@ def render_chat(store: VectorStore, subject: str | None, sources: list[str]) -> 
         # Reserve the answer slot before streaming. Submitting another question
         # mid-stream cancels this script run, and without the placeholder the
         # question would be stranded in the history with nothing beneath it.
-        pending = {"role": "assistant", "content": "", "hits": []}
+        pending = {"role": "assistant", "content": "", "hits": [], "cases": []}
         history.append(pending)
 
         with st.chat_message("assistant"):
@@ -400,6 +453,12 @@ def render_chat(store: VectorStore, subject: str | None, sources: list[str]) -> 
                 st.error(f"Unexpected error: {exc}", icon="🚨")
             else:
                 render_citations(hits)
+                # After the answer, not before: the student reads the answer
+                # while the case lookup runs.
+                with st.spinner("Finding a related case..."):
+                    related = find_related_cases(question)
+                render_cases(related)
+                pending["cases"] = related
 
         pending["content"] = answer
         pending["hits"] = list(hits)

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Iterable, Iterator, Sequence
 
-from src import config, embeddings, prompts
+from src import case_lookup, config, embeddings, prompts
 from src.vector_store import SearchHit, VectorStore, VectorStoreError, get_store
 
 
@@ -70,12 +70,22 @@ def retrieve(
     top_k: int = config.TOP_K,
     score_threshold: float | None = config.SCORE_THRESHOLD,
 ) -> list[SearchHit]:
-    """Embed the question and fetch the most similar chunks."""
+    """Fetch the chunks that answer the question.
+
+    A question that names a case ("summarise Ohimen v Adjei") gets that case's
+    judgment, read in order from its heading - semantic search cannot find a
+    case by name (see src/case_lookup.py). Anything else, or a case the
+    materials only cite, falls through to similarity search.
+    """
     question = (question or "").strip()
     if not question:
         return []
 
     target = store or get_store()
+    judgment = case_lookup.lookup(question, target, subject=subject, sources=sources)
+    if judgment:
+        return judgment
+
     query_vector = embeddings.embed_query(question)
     return target.search(
         query_vector,
