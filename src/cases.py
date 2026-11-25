@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -233,17 +234,20 @@ class CaseLibrary:
         top_k: int = config.CASE_TOP_K,
         min_score: float = config.CASE_MIN_SCORE,
         margin: float = config.CASE_SCORE_MARGIN,
+        exclude: Callable[[Case], bool] | None = None,
     ) -> list[CaseMatch]:
         """Best-matching cases above ``min_score``.
 
         Runners-up are kept only within ``margin`` of the best match, so one
         clearly relevant case is not padded out with a loosely related one.
+        Cases for which ``exclude`` returns True are skipped before the
+        margin is measured.
         """
         try:
             response = self.client.query_points(
                 collection_name=self.collection,
                 query=list(query_vector),
-                limit=top_k,
+                limit=top_k + (1 if exclude else 0),
                 score_threshold=min_score,
                 with_payload=True,
             )
@@ -254,6 +258,9 @@ class CaseLibrary:
             CaseMatch(case=Case.from_payload(point.payload or {}), score=float(point.score))
             for point in response.points
         ]
+        if exclude:
+            matches = [m for m in matches if not exclude(m.case)]
+        matches = matches[:top_k]
         if not matches:
             return []
         best = matches[0].score
@@ -261,10 +268,22 @@ class CaseLibrary:
 
 
 def match_question(question: str, library: CaseLibrary) -> list[CaseMatch]:
-    """Cases that illustrate the law behind ``question``."""
+    """Cases that illustrate the law behind ``question``.
+
+    When the question names a case ("summarise Ohimen v Adjei"), that case is
+    the answer itself, so it is not suggested again as a related case.
+    """
     question = (question or "").strip()
     if not question:
         return []
     from src import embeddings
+    from src.case_lookup import extract_case_reference
 
-    return library.find(embeddings.embed_query(question))
+    reference = extract_case_reference(question)
+    exclude = None
+    if reference is not None:
+        def exclude(case: Case) -> bool:
+            words = set(re.findall(r"[^\W_]+", case.name.lower()))
+            return all(token in words for token in reference.tokens)
+
+    return library.find(embeddings.embed_query(question), exclude=exclude)

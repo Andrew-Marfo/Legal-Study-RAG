@@ -190,6 +190,24 @@ def test_find_drops_runner_up_outside_margin(client):
     assert [m.case.name for m in loose] == ["Strong", "Weaker"]
 
 
+def test_named_case_is_not_suggested_back(client, monkeypatch):
+    from src import embeddings
+
+    cases = [
+        _case("Ohimen v Adjei", "privity"),
+        _case("Tweddle v Atkinson", "privity assault"),
+    ]
+    library = _library(client, cases=cases)
+    library.sync(embed=fake_embed)
+    monkeypatch.setattr(embeddings, "embed_query", lambda q: _concept_vector("privity"))
+
+    # Without the name in the question, the case is the best match...
+    assert match_question("What is privity?", library)[0].case.name == "Ohimen v Adjei"
+    # ...but when the question asks about it, the next case is suggested instead.
+    matches = match_question("Summarise Ohimen vs Adjei", library)
+    assert [m.case.name for m in matches] == ["Tweddle v Atkinson"]
+
+
 def test_match_question_ignores_blank_questions(client):
     library = _library(client)
     assert match_question("   ", library) == []
